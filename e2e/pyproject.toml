@@ -1,0 +1,27 @@
+[project]
+name = "webbpulse-site-e2e"
+version = "0"
+requires-python = ">=3.13"
+license = "LicenseRef-PolyForm-Strict-1.0.0"
+
+[dependency-groups]
+e2e = [
+  "webbpulse[e2e]>=0.98.0,<1",
+  "boto3>=1.43.90",
+  "httpx>=0.28.1",
+  "pytest>=9.1.1",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "codeartifact"
+url = "https://webbpulse-432410731887.d.codeartifact.us-west-2.amazonaws.com/pypi/python/simple/"
+explicit = true
+
+[tool.uv.sources]
+webbpulse = { index = "codeartifact" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
