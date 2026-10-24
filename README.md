@@ -15,7 +15,17 @@ The WebbPulse company site, served at [webbpulse.com](https://webbpulse.com).
   `portfolio.webbpulse.com`, serves `/` and files with an extension from the
   bucket, and answers any other path with a 404 page.
 
+- `e2e/` is the post-deploy smoke suite, run by the org e2e workflow after each
+  deploy. It checks the page, the security headers and the edge redirects, and
+  mints a staging access gate session through `webbpulse.e2e.gate`.
+
+Each GitHub environment carries `SITE_S3_BUCKET`, `SITE_CLOUDFRONT_DISTRIBUTION_ID`,
+`AWS_DEPLOY_ROLE_ARN`, `E2E_WEB_BASE_URL` and `E2E_API_BASE_URL` (the site origin,
+since there is no API), and staging also the three `E2E_GATE_*` values, all from
+the terraform outputs. The repository carries `CI_AWS_ROLE_ARN` and
+`CODEARTIFACT_DOMAIN_OWNER`.
+
 Changes go through a pull request into `staging`, then a promotion pull request
-from a `promote/<date>` branch into `main`. A push to either branch deploys.
+from a `promote/<date>-<theme>` branch into `main`. A push to either branch deploys.
 
 The site moved here from WebbPulse-Portfolio, where its earlier history lives.
