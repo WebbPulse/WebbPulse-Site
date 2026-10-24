@@ -1,0 +1,29 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Deploy Site]
+    types: [completed]
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Verify the deployed environment
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      checks: write
+    uses: WebbPulse/.github/.github/workflows/e2e.yml@v3
+    with:
+      deploy-workflows: "Deploy Site"
+      working-directory: e2e
+      e2e-directory: tests
+      install-command: uv lock --upgrade-package webbpulse && uv sync --locked --only-group e2e
+      pytest-args: "-p no:cacheprovider"
+      codeartifact-domain: webbpulse
+      read-only-environments: "production,staging"

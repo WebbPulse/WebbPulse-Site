@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      site: ${{ steps.filter.outputs.site }}
+      terraform: ${{ steps.filter.outputs.terraform }}
+      e2e: ${{ steps.filter.outputs.e2e }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            site:
+              - 'site/**'
+              - '.github/workflows/ci.yml'
+            terraform:
+              - 'terraform/**'
+              - '.github/workflows/ci.yml'
+            e2e:
+              - 'e2e/**'
+              - '.github/workflows/ci.yml'
+
+  site:
+    name: Site
+    needs: changes
+    if: needs.changes.outputs.site == 'true' && vars.CI_AWS_ROLE_ARN != ''
+    permissions:
+      id-token: write
+      contents: read
+    uses: WebbPulse/.github/.github/workflows/typescript-ci.yml@v3
+    with:
+      node-version: "22"
+      working-directory: site
+      install-command: >-
+        npm ci && npm update $(node -p "const p=require('./package.json');Object.keys({...p.dependencies,...p.devDependencies}).filter(n=>n.startsWith('@webbpulse/')).join(' ')") && { npm ls --depth=0 2>/dev/null | grep @webbpulse || true; }
+      lint-command: npm run lint
+      format-check-command: npm run format:check
+      typecheck-command: ""
+      test-command: npm run test:run -- --coverage
+      build-command: npm run build
+      codeartifact-domain: webbpulse
+      codeartifact-repository: npm
+      codeartifact-namespace: "@webbpulse"
+      aws-region: us-west-2
+    secrets:
+      role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
+      codeartifact-domain-owner: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+
+  site-audit:
+    name: Site npm audit
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Audit the lockfile against the public advisory database
+        working-directory: site
+        run: npm audit --package-lock-only --omit=dev --audit-level=moderate --registry=https://registry.npmjs.org/
+
+  terraform:
+    name: Terraform format and validate
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+
+      - name: Check formatting
+        working-directory: terraform
+        run: terraform fmt -check -recursive -diff
+
+  e2e-collect:
+    name: E2E suite collects
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true' && vars.CI_AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.10"
+          python-version: "3.13"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.CI_AWS_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Authenticate the CodeArtifact index for uv
+        env:
+          CODEARTIFACT_DOMAIN_OWNER: ${{ vars.CODEARTIFACT_DOMAIN_OWNER }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws codeartifact get-authorization-token --domain webbpulse --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" --query authorizationToken --output text)
+          echo "::add-mask::$TOKEN"
+          echo "UV_INDEX_CODEARTIFACT_USERNAME=aws" >> "$GITHUB_ENV"
+          echo "UV_INDEX_CODEARTIFACT_PASSWORD=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Install and collect the suite
+        working-directory: e2e
+        run: |
+          set -euo pipefail
+          uv sync --locked --only-group e2e
+          uv run --no-sync python -m pytest tests --collect-only -q
+
+  all-checks-passed:
+    name: all-checks-passed
+    runs-on: ubuntu-latest
+    needs: [changes, site, site-audit, terraform, e2e-collect]
+    if: always()
+    steps:
+      - name: Fail unless every upstream job succeeded or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"result": *"(failure|cancelled)"'; then
+            echo "::error::at least one upstream job failed or was cancelled"
+            exit 1
+          fi
+          echo "Every upstream job succeeded or was skipped."
