@@ -51,7 +51,7 @@ locals {
     {
       sid       = "E2EDecryptGateSigningKey"
       actions   = ["kms:Decrypt"]
-      resources = [data.aws_kms_alias.ssm.target_key_arn]
+      resources = ["arn:aws:kms:${var.aws_region}:${data.aws_caller_identity.current.account_id}:key/*"]
       condition = {
         StringEquals = { "kms:ViaService" = ["ssm.${var.aws_region}.amazonaws.com"] }
       }
@@ -66,8 +66,7 @@ module "github_actions_deploy_role" {
   role_name        = "${local.prefix}-site-github-actions-deploy"
   role_description = "Deploys the company site from WebbPulse/WebbPulse-Site and runs its e2e suite."
 
-  create_oidc_provider = false
-  oidc_provider_arn    = data.aws_iam_openid_connect_provider.github.arn
+  create_oidc_provider = true
 
   subjects = [
     "${local.repository_subject}:environment:staging",
@@ -90,7 +89,7 @@ module "github_actions_ci_role" {
   role_description = "Read-only CodeArtifact access for pull request CI in WebbPulse/WebbPulse-Site."
 
   create_oidc_provider = false
-  oidc_provider_arn    = data.aws_iam_openid_connect_provider.github.arn
+  oidc_provider_arn    = module.github_actions_deploy_role.oidc_provider_arn
 
   subjects = [
     "${local.repository_subject}:pull_request",
